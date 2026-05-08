@@ -1,110 +1,148 @@
 # Windows SSH Setup Automation
 
-Automated passwordless SSH configuration for a Windows machine via Cloudflare tunnel, with CMD set as the default shell.
+Comprehensive automated setup for Windows SSH access via Cloudflare tunnel or LAN direct connection.
 
 ---
 
-## Quick Reference: Which Script to Use When
+## Quick Reference
 
-| Situation | Script | Copy-Paste Command |
-|-----------|--------|-------------------|
-| **First-time setup** — configure a fresh Windows machine with your SSH key, default shell, admin policies, and a secondary admin user | `setup_win_ssh.sh` | `./setup_win_ssh.sh` |
-| **Daily SSH login** — connect to an already-configured machine | `ssh_remote.sh` | `./ssh_remote.sh` |
-| **Manual reconfiguration** — run PowerShell directly on the Windows host (rarely needed) | `setup_remote.ps1` | `powershell -ExecutionPolicy Bypass -File setup_remote.ps1 "<your-pubkey>"` |
+| Situation | Script | Usage |
+|-----------|--------|-------|
+| **First-time setup** from Mac/Linux | `setup_win_ssh.sh` | `./setup_win_ssh.sh` |
+| **Windows with nothing installed** | `setup_remote.ps1` | Run locally on Windows |
+| **Daily SSH login (Cloudflare)** | `ssh_remote.sh` | `./ssh_remote.sh` |
+| **Direct LAN SSH** | `ssh_remote.sh` | `./ssh_remote.sh --lan -i 192.168.1.x` |
 
 ---
 
 ## Prerequisites
 
-- `expect` installed on your local machine
-- `cloudflared` installed on your local machine
-- SSH access to the Windows machine (password known for first run)
+The `setup_win_ssh.sh` script auto-installs dependencies. For `setup_remote.ps1`, run as Administrator on Windows.
 
 ---
 
-## 1. First-Time Setup (`setup_win_ssh.sh`)
+## Option 1: Setup from Mac/Linux (`setup_win_ssh.sh`)
 
-Run this **once per machine** to:
-- Copy your public SSH key to the remote Windows host
-- Set strict ACLs on `administrators_authorized_keys`
-- Set CMD as the default OpenSSH shell
-- Enable `LocalAccountTokenFilterPolicy` for full admin access over SSH
-- Create a secondary admin user `j` / password `j`
-- Hide user `m` from the Windows login screen
-- Restart the SSH service
+Run this **once** to configure a Windows machine remotely:
 
-### Steps
+```bash
+./setup_win_ssh.sh
+```
 
-1. Edit `setup_win_ssh.sh` to match your target:
-   ```bash
-   REMOTE_TARGET="j@j.mrme0.store"
-   REMOTE_PASS="j"
-   PUBKEY_PATH="$HOME/.ssh/id_ed25519.pub"
-   ```
-
-2. Run the setup:
-   ```bash
-   ./setup_win_ssh.sh
-   ```
+What it does:
+- ✓ Auto-installs `expect`, `cloudflared`, `ssh` on your local machine
+- ✓ Generates SSH key pair if missing
+- ✓ Connects via Cloudflare tunnel to Windows
+- ✓ Installs/configures OpenSSH Server on Windows
+- ✓ Sets up `administrators_authorized_keys` with correct ACLs
+- ✓ Sets CMD as default shell
+- ✓ Enables `LocalAccountTokenFilterPolicy` for full admin access
+- ✓ Configures firewall rules for port 22 (LAN + Cloudflare)
+- ✓ Restarts sshd service
 
 ---
 
-## 2. Daily Connection (`ssh_remote.sh`)
+## Option 2: Run Directly on Windows (`setup_remote.ps1`)
 
-Run this **every time you want to SSH in** after setup is complete.
+**Use this when:**
+- Windows has no SSH server installed
+- You're physically at the Windows machine
+- The automated setup failed
 
+### Usage
+
+1. **Open PowerShell as Administrator** (right-click → "Run as Administrator")
+
+2. **Get your public SSH key** from your Mac/Linux:
+   ```bash
+   cat ~/.ssh/id_ed25519.pub
+   # or
+   cat /Volumes/ExMac/code/winsshsetup/id_ed25519.pub
+   ```
+
+3. **Run the script** on Windows:
+   ```powershell
+   # Copy your public key, then run:
+   powershell -ExecutionPolicy Bypass -File setup_remote.ps1 "ssh-ed25519 AAAA... user@hostname"
+   ```
+
+### What `setup_remote.ps1` Does
+
+| Step | Action | Why |
+|------|--------|-----|
+| 1 | Install OpenSSH Server | Windows built-in SSH server |
+| 2 | Create `C:\ProgramData\ssh` | SSH config directory |
+| 3 | Write `administrators_authorized_keys` | Admin SSH access |
+| 4 | Set ACLs (Admins + SYSTEM only) | **Critical** - SSH won't work without this |
+| 5 | Set CMD as default shell | Better than PowerShell for admin tasks |
+| 6 | Enable `LocalAccountTokenFilterPolicy` | Full admin tokens over network |
+| 7 | Create firewall rule for port 22 | Allow SSH connections |
+| 8 | Generate host keys | First-time SSH setup |
+| 9 | Start sshd service | Enable SSH daemon |
+| 10 | Verify configuration | Confirm everything works |
+
+---
+
+## Option 3: Daily Connection (`ssh_remote.sh`)
+
+### Cloudflare Tunnel (remote access)
 ```bash
 ./ssh_remote.sh
 ```
 
-Or connect directly without the helper:
+### Direct LAN Access (faster, local network)
 ```bash
-ssh -o ProxyCommand="cloudflared access ssh --hostname %h" j@j.mrme0.store
-```
-
-### Recommended: Add to `~/.ssh/config`
-
-```text
-Host j.mrme0.store
-    ProxyCommand cloudflared access ssh --hostname %h
-```
-
-Then simply run:
-```bash
-ssh j@j.mrme0.store
+./ssh_remote.sh --lan -i 192.168.1.100
 ```
 
 ---
 
-## 3. Manual PowerShell Reconfiguration (`setup_remote.ps1`)
+## SSH Config (Recommended)
 
-Only needed if you want to **run the remote configuration manually on the Windows host itself** (e.g., debugging or the expect script fails).
+Add to `~/.ssh/config`:
 
-```powershell
-powershell -ExecutionPolicy Bypass -File setup_remote.ps1 "ssh-ed25519 AAAAC3... your@email.com"
+```text
+# Cloudflare tunnel access
+Host j.mrme0.store
+    User m
+    ProxyCommand cloudflared access ssh --hostname %h
+
+# Direct LAN access (replace with Windows IP)
+Host 192.168.1.100
+    User m
 ```
 
-What it does:
-- Writes the provided public key to `C:\ProgramData\ssh\administrators_authorized_keys`
-- Locks down file ACLs to SYSTEM and Administrators only
-- Sets CMD as the default OpenSSH shell
-- Restarts the `sshd` service
+Then simply: `ssh j.mrme0.store` or `ssh 192.168.1.100`
 
 ---
 
 ## File Overview
 
-| File | Purpose | When to Use |
-|------|---------|-------------|
-| `setup_win_ssh.sh` | Main entry point — local orchestration script | **First run only** |
-| `automate_win_ssh.expect` | Expect script that automates the initial password-based SSH login and runs remote commands | Called automatically by `setup_win_ssh.sh` |
-| `setup_remote.ps1` | PowerShell script that performs the actual Windows-side configuration | Manual reconfiguration on the Windows host |
-| `ssh_remote.sh` | Convenience wrapper for daily SSH connections | **Every day after setup** |
+| File | Purpose |
+|------|---------|
+| `setup_win_ssh.sh` | Comprehensive remote setup from Mac/Linux |
+| `setup_remote.ps1` | Standalone Windows PowerShell setup script |
+| `ssh_remote.sh` | Daily SSH connection helper |
+| `automate_win_ssh.expect` | Underlying automation (called by setup script) |
 
 ---
 
 ## Troubleshooting
 
-- **"Public key not found"** — The setup script will auto-generate an Ed25519 keypair if missing.
-- **Permission denied** — Ensure the Windows user has admin rights and the password in `setup_win_ssh.sh` is correct.
-- **Cloudflare tunnel issues** — Verify `cloudflared` is installed and the tunnel is active on the Windows side.
+| Error | Solution |
+|-------|----------|
+| **"Permission denied"** | Verify password, ensure user is Administrator |
+| **"OpenSSH not found"** | Windows Server? Use `dism` method or download from GitHub |
+| **"ACLs error"** | SSH requires **only** Administrators + SYSTEM on `administrators_authorized_keys` |
+| **"Connection refused"** | Check firewall: `Test-NetConnection localhost -Port 22` on Windows |
+| **"Key not accepted"** | Verify `administrators_authorized_keys` ACLs - this is the #1 cause |
+
+---
+
+## Quick Windows IP Discovery
+
+To find your Windows machine's LAN IP for direct access:
+```powershell
+ipconfig | findstr IPv4
+```
+Look for the IPv4 address on the local network adapter.
