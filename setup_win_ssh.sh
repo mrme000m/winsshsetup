@@ -6,7 +6,7 @@
 # Configuration
 REMOTE_TARGET="j@j.mrme0.store"
 REMOTE_PASS="j"
-PUBKEY_PATH="$HOME/.ssh/id_ed25519.pub"
+PUBKEY_PATH="$(dirname "$0")/id_ed25519.pub"
 
 # Check if pubkey exists
 if [ ! -f "$PUBKEY_PATH" ]; then
